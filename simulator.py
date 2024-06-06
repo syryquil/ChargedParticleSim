@@ -82,7 +82,7 @@ class Simulator:
         times = np.linspace(t_i, self.t, num_frames)
 
         all_artists = []
-        for t in tqdm(times, leave=True, position=0, desc='plotting', colour="green"):
+        for t in tqdm(times, leave=True, position=0, desc='plotting', colour="green"): #for loop with progress bar
             frame_artists = self._plot_fields(t, ax, plot_phi=plot_phi, E_streamplot=False)
 
             all_artists.append(frame_artists)
@@ -258,7 +258,6 @@ class Simulator:
         artists.append(self._plot_particles(positions, ax))
         artists.append(title)
 
-        # tqdm.write(f"time {t} plotted!")
         return artists
 
     def _plot_B(self, B_grid, ax, B_range=3) -> plt.Axes:
@@ -305,13 +304,18 @@ class DynamicSim(Simulator):
         :param error_tolerance: Maximum allowed error of relative particle positions in units/second
         :return: None
         '''
+        #ignore errors from progress bar due to adaptive timestep
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
+            # progress bar formatting
             bar_format = '{l_bar}{bar}| {n:.3f}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]'
             with tqdm(total=tmax, unit="sim_t", position=0, leave=True, desc='simulating', bar_format=bar_format) as pbar:
+
+                #run simulation
                 while self.t < tmax and self.dt > min_dt:
                     self.step_simulator(error_tolerance=error_tolerance, min_dt=min_dt, max_dt=max_dt)
+
                     pbar.update(2*self.dt)
 
         print(f"simulation completed to t = {self.t:.3f}!")

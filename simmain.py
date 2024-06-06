@@ -4,8 +4,6 @@ from grid import Grid
 from particle import DynamicParticle
 from simulator import DynamicSim
 
-maxi = 3
-
 def static_particle(mass, charge, loc):
     '''
     :param mass: mass of particle
@@ -95,6 +93,7 @@ p2 = oscillating_particle(1, 2, (2.5, 1.45), -.92, -.25, .24)
 particles = [p1, p2]
 
 if __name__ == "__main__":
+    maxi = 3
     sim = DynamicSim(particles, dt=.001, x_max=maxi, y_max=maxi, n_x=100, n_y=100)
 
     sim.run(tmax=5, min_dt=.000001, max_dt=.01)
