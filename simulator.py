@@ -154,10 +154,33 @@ class Simulator:
         if filepath: plt.savefig(filepath)
         if show: plt.show()
 
+    ######################
+    ##simulation helpers##
+    ######################
+    def _update_values(self):
+        self.t = self.particles[0].t_curr
+
+        self.positions = np.array([particle.get_r() for particle in self.particles])
+        self.velocities = np.array([particle.get_v() for particle in self.particles])
+        self.gammas = np.array([particle.get_gamma() for particle in self.particles])
+
+        self.Bs, self.Es = self._calc_fields()
+
+    def _calc_distances(self):
+        distances = np.zeros((self.num_particles, self.num_particles))
+
+        for i in range(self.num_particles):
+            for j in range(i + 1, self.num_particles):
+                distances[i][j] = np.linalg.norm(self.positions[i] - self.positions[j])
+
+        if self.num_particles == 1: #if only one particle, use distance from the origin instead
+            distances[0, 0] = np.linalg.norm(self.particles[0].get_r())
+
+        return distances
+
     ##########
     ##fields##
     ##########
-
     def _total_B(self, loc, particle=None, t=None, background_B = 0):  #find B field at location excluding a particles own field
         if t is None:
             t = self.t
@@ -201,45 +224,6 @@ class Simulator:
 
         return B_vec, E_vec
 
-    ######################
-    ##simulation helpers##
-    ######################
-    def _update_values(self):
-        self.t = self.particles[0].t_curr
-
-        self.positions = np.array([particle.get_r() for particle in self.particles])
-        self.velocities = np.array([particle.get_v() for particle in self.particles])
-        self.gammas = np.array([particle.get_gamma() for particle in self.particles])
-
-        self.Bs, self.Es = self._calc_fields()
-
-    def _calc_gridded_fields(self, x_max, y_max, n_x, n_y, t=None):
-        if t is None:
-            t = self.t
-
-        B_grid = Grid(x_max, y_max, n_x, n_y)
-        B_grid.apply(partial(self._total_B, t=t))
-
-        phi_grid = Grid(x_max, y_max, n_x, n_y)
-        phi_grid.apply(partial(self._total_phi, t=t))
-
-        E_grid = Grid(x_max, y_max, n_x, n_y)
-        E_grid.apply(partial(self._total_E, t=t))
-
-        return B_grid, phi_grid, E_grid
-
-    def _calc_distances(self):
-        distances = np.zeros((self.num_particles, self.num_particles))
-
-        for i in range(self.num_particles):
-            for j in range(i + 1, self.num_particles):
-                distances[i][j] = np.linalg.norm(self.positions[i] - self.positions[j])
-
-        if self.num_particles == 1: #if only one particle, use distance from the origin instead
-            distances[0, 0] = np.linalg.norm(self.particles[0].get_r())
-
-        return distances
-
     ################
     ##plot helpers##
     ################
@@ -259,6 +243,21 @@ class Simulator:
         artists.append(title)
 
         return artists
+
+    def _calc_gridded_fields(self, x_max, y_max, n_x, n_y, t=None):
+        if t is None:
+            t = self.t
+
+        B_grid = Grid(x_max, y_max, n_x, n_y)
+        B_grid.apply(partial(self._total_B, t=t))
+
+        phi_grid = Grid(x_max, y_max, n_x, n_y)
+        phi_grid.apply(partial(self._total_phi, t=t))
+
+        E_grid = Grid(x_max, y_max, n_x, n_y)
+        E_grid.apply(partial(self._total_E, t=t))
+
+        return B_grid, phi_grid, E_grid
 
     def _plot_B(self, B_grid, ax, B_range=3) -> plt.Axes:
         return ax.pcolormesh(B_grid.xg, B_grid.yg, B_grid.values, vmax=B_range, vmin=-B_range, cmap="bwr_r", zorder=0)
@@ -365,48 +364,27 @@ class DynamicSim(Simulator):
                 self._undo_move()
                 self.dt = dt
 
-    ################
-    ##interactions##
-    ################
-    def _calc_lorentz_forces(self, return_component_forces=False):
-        # calculates the lorentz EM forces on our particles
-        vxB = np.array((self.velocities[:, 1] * self.Bs, -self.velocities[:, 0] * self.Bs)).T
-
-        lorentz_forces = self._scalar_vector(self.charges, self.Es + vxB)
-        if return_component_forces:
-            return lorentz_forces, self._scalar_vector(self.charges, self.Es), self._scalar_vector(self.charges, vxB)
-        return lorentz_forces
-
-    def _calc_radiation_reaction_forces(self):  #calculates the Abraham-Lorentz-Dirac self-force (actually a result of energy radiation)
-        coefficient_term = -(self.charges ** 4 * self.gammas ** 2) / (6 * np.pi * self.masses ** 2)
-
-        np.seterr(divide='ignore')
-        Eprojv = self._scalar_vector( self._dot(self.Es, self.velocities) /
-                                      self._dot(self.velocities, self.velocities), self.velocities)
-        E_perp = self.Es - Eprojv
-        vxB = np.array((self.velocities[:, 1] * self.Bs, -self.velocities[:, 0] * self.Bs)).T
-        inner_term = E_perp - vxB
-        motion_term = self._dot(inner_term, inner_term)
-
-        F_RR = np.nan_to_num(self._scalar_vector(coefficient_term * motion_term, self.velocities))
-        return F_RR
-
-    def _calc_total_forces(self, ret_comp=False):  #calculate all forces on our particles
-        if ret_comp:
-            lorentz_forces, E_forces, B_forces = self._calc_lorentz_forces(True)
-        else:
-            lorentz_forces = self._calc_lorentz_forces()
-
-        RR_forces = self._calc_radiation_reaction_forces()
-        forces = lorentz_forces + RR_forces
-
-        if ret_comp:
-            return forces, E_forces, B_forces, RR_forces, lorentz_forces
-        return forces
-
     ######################
     ##simulation helpers##
     ######################
+    def _rkstep(self, dt, ret_derivatives=False):
+        f_1 = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
+        f_2 = self._substep(*f_1, .5 * dt)
+        f_3 = self._substep(*f_2, .5 * dt)
+        f_4 = self._substep(*f_3, dt)
+
+        d_dt = (1 / 6) * (f_1 + 2 * f_2 + 2 * f_3 + f_4)
+        self._move_particles(*d_dt, dt)
+        if ret_derivatives:
+            return d_dt[0], d_dt[1]
+
+    def _substep(self, dv_dts, dr_dts, dt):
+        self._move_particles(dv_dts, dr_dts, dt)
+        d_dts = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
+        self._undo_move()
+
+        return d_dts
+
     def _move_particles(self, dv_dts, dr_dts, dt):
         for i, particle in enumerate(self.particles):
             new_r = self.positions[i] + dr_dts[i] * dt
@@ -431,23 +409,11 @@ class DynamicSim(Simulator):
             self.times.pop()
             self.paths.pop()
 
-    def _rkstep(self, dt, ret_derivatives=False):
-        f_1 = np.array([self._scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
-        f_2 = self._substep(*f_1, .5 * dt)
-        f_3 = self._substep(*f_2, .5 * dt)
-        f_4 = self._substep(*f_3, dt)
-
-        d_dt = (1 / 6) * (f_1 + 2 * f_2 + 2 * f_3 + f_4)
-        self._move_particles(*d_dt, dt)
-        if ret_derivatives:
-            return d_dt[0], d_dt[1]
-
-    def _substep(self, dv_dts, dr_dts, dt):
-        self._move_particles(dv_dts, dr_dts, dt)
-        d_dts = np.array([self._scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
+    def _undo_and_reduce_dt(self, twice, dt_fraction=.25):
         self._undo_move()
-
-        return d_dts
+        if twice:
+            self._undo_move()
+        self.dt *= dt_fraction
 
     def _calc_adaptive_timestep(self, distances_1, distances_2, error_tolerance, max_dt=None):
         if max_dt is None:
@@ -466,22 +432,55 @@ class DynamicSim(Simulator):
 
         return dt, accept_move
 
-    def _undo_and_reduce_dt(self, twice, dt_fraction=.25):
-        self._undo_move()
-        if twice:
-            self._undo_move()
-        self.dt *= dt_fraction
-
     def _update_values(self):
         super()._update_values()
         self.forces, self.E_forces, self.B_forces, self.RR_forces, self.lorentz_forces = self._calc_total_forces(True)
 
-    ##################
-    ##vector helpers##
-    ##################
+    ################
+    ##interactions##
+    ################
+    def _calc_lorentz_forces(self, return_component_forces=False):
+        # calculates the lorentz EM forces on our particles
+        vxB = np.array((self.velocities[:, 1] * self.Bs, -self.velocities[:, 0] * self.Bs)).T
 
-    def _dot(self, a, b):  #where a and b are both N*2 arrays
-        return np.sum(a * b, axis=1)
+        lorentz_forces = _scalar_vector(self.charges, self.Es + vxB)
+        if return_component_forces:
+            return lorentz_forces, _scalar_vector(self.charges, self.Es), _scalar_vector(self.charges, vxB)
+        return lorentz_forces
 
-    def _scalar_vector(self, coeffs, a):  #coeffs is an N vec and a is an N*2 array
-        return a * coeffs[:, np.newaxis]
+    def _calc_radiation_reaction_forces(self):  #calculates the Abraham-Lorentz-Dirac self-force (actually a result of energy radiation)
+        coefficient_term = -(self.charges ** 4 * self.gammas ** 2) / (6 * np.pi * self.masses ** 2)
+
+        np.seterr(divide='ignore')
+        Eprojv = _scalar_vector( _dot(self.Es, self.velocities) /
+                                      _dot(self.velocities, self.velocities), self.velocities)
+        E_perp = self.Es - Eprojv
+        vxB = np.array((self.velocities[:, 1] * self.Bs, -self.velocities[:, 0] * self.Bs)).T
+        inner_term = E_perp - vxB
+        motion_term = _dot(inner_term, inner_term)
+
+        F_RR = np.nan_to_num(_scalar_vector(coefficient_term * motion_term, self.velocities))
+        return F_RR
+
+    def _calc_total_forces(self, ret_comp=False):  #calculate all forces on our particles
+        if ret_comp:
+            lorentz_forces, E_forces, B_forces = self._calc_lorentz_forces(True)
+        else:
+            lorentz_forces = self._calc_lorentz_forces()
+
+        RR_forces = self._calc_radiation_reaction_forces()
+        forces = lorentz_forces + RR_forces
+
+        if ret_comp:
+            return forces, E_forces, B_forces, RR_forces, lorentz_forces
+        return forces
+
+
+##################
+##vector helpers##
+##################
+def _dot(a, b):  #where a and b are both N*2 arrays
+    return np.sum(a * b, axis=1)
+
+def _scalar_vector(coeffs, a):  #coeffs is an N vec and a is an N*2 array
+    return a * coeffs[:, np.newaxis]
