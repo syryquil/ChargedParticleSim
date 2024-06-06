@@ -158,7 +158,7 @@ class Simulator:
     ##fields##
     ##########
 
-    def _total_B(self, loc, particle=None, t=None, background_B = -1):  #find B field at location excluding a particles own field
+    def _total_B(self, loc, particle=None, t=None, background_B = 0):  #find B field at location excluding a particles own field
         if t is None:
             t = self.t
 
