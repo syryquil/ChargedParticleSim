@@ -337,12 +337,11 @@ class DynamicSim(Simulator):
             try:
                 self._rkstep(self.dt * 2)
             except SpeedOfLightError:
-                self._undo_move()
-                self.dt *= .25
+                self._undo_and_reduce_dt(False)
                 continue
+            distances_1 = self._calc_distances()
 
             # undo long step
-            distances_1 = self._calc_distances()
             self._undo_move()
 
             # try 2 short steps
@@ -352,12 +351,8 @@ class DynamicSim(Simulator):
                 twice = True
                 self._rkstep(self.dt)
             except SpeedOfLightError:
-                self._undo_move()
-                if twice:
-                    self._undo_move()
-                self.dt *= .25
+                self._undo_and_reduce_dt(twice)
                 continue
-
             distances_2 = self._calc_distances()
 
             # determine new dt, and decide whether to accept current steps
@@ -470,6 +465,12 @@ class DynamicSim(Simulator):
             accept_move = False
 
         return dt, accept_move
+
+    def _undo_and_reduce_dt(self, twice, dt_fraction=.25):
+        self._undo_move()
+        if twice:
+            self._undo_move()
+        self.dt *= dt_fraction
 
     def _update_values(self):
         super()._update_values()
