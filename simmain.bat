@@ -1,1 +1,2 @@
 python simmain.py
+pause

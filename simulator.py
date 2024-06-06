@@ -308,7 +308,8 @@ class DynamicSim(Simulator):
             warnings.simplefilter("ignore")
 
             # progress bar formatting
-            bar_format = '{l_bar}{bar}| {n:.3f}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]'
+            digits = int(np.floor(np.abs(np.log10(min_dt)))) -  1
+            bar_format = "'{l_bar}{bar}| {n:." + str(digits) + "f}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]'"
             with tqdm(total=tmax, unit="sim_t", position=0, leave=True, desc='simulating', bar_format=bar_format) as pbar:
 
                 #run simulation
