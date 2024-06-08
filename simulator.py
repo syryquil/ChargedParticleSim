@@ -233,7 +233,7 @@ class Simulator:
             phi += source_charge.phi(loc, t)
         return phi
 
-    def _calc_fields(self):
+    def _calc_fields(self): # compute fields at current locations of all particles
         B_vec = np.array([self._total_B(particle.get_r(), particle=particle) for particle in self.particles])
         E_vec = np.array([self._total_E(particle.get_r(), particle=particle) for particle in self.particles])
 
@@ -378,9 +378,7 @@ class DynamicSim(Simulator):
         f_6 = self._substep(*(-f_1*16/27 + f_2*4 - f_3*7088/2565 + f_4*1859/2052 - f_5*11/20), dt*1/2)
 
         d_dt_5th = f_1*16/135 + f_3*6656/12825 + f_4*28561/56430 - f_5*9/50 + f_6*2/55
-        self._move_particles(*d_dt_5th, dt)
-        distances_5th = self._calc_distance_vecs() #interparticle distances
-        self._undo_move()
+        distances_5th = self._test_move(*d_dt_5th, dt, lambda: self._calc_distance_vecs()),  #interparticle distances
 
         d_dt_4th = f_1*25/216 + f_3*1408/2565 + f_4*2197/4104 - f_5*1/5
         self._move_particles(*d_dt_4th, dt) #we keep this one
@@ -389,12 +387,18 @@ class DynamicSim(Simulator):
         return distances_4th, distances_5th
 
     def _substep(self, dv_dts, dr_dts, dt):
+        return self._test_move(dv_dts, dr_dts, dt,
+            lambda: np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities]),
+        )
+
+    def _test_move(self, dv_dts, dr_dts, dt, func):
+        forces = (self.forces, self.E_forces, self.B_forces, self.RR_forces, self.lorentz_forces)
         self._move_particles(dv_dts, dr_dts, dt)
-        d_dts = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
-        self._undo_move()
-
-        return d_dts
-
+        out = func()
+        self._undo_move(False)
+        self.forces, self.E_forces, self.B_forces, self.RR_forces, self.lorentz_forces = forces
+        return out
+        
     def _move_particles(self, dv_dts, dr_dts, dt):
         for i, particle in enumerate(self.particles):
             new_r = self.positions[i] + dr_dts[i] * dt
@@ -405,7 +409,7 @@ class DynamicSim(Simulator):
         self.times.append(self.t)
         self.paths.append(self.positions)
 
-    def _undo_move(self) -> None:
+    def _undo_move(self, update_forces: True) -> None:
         particle_times = {particle.t_curr for particle in self.particles}
 
         for particle in self.particles:
@@ -413,8 +417,10 @@ class DynamicSim(Simulator):
                 # Only undoes particles who have already been moved.
                 # This is useful when a move has to be undone immediately due to a SpeedOfLightError.
                 particle.undo_move()
-
-        self._update_values()
+        
+        if update_forces:
+            self._update_values()
+        
         if self.times:
             self.times.pop()
             self.paths.pop()
