@@ -437,12 +437,13 @@ class DynamicSim(Simulator):
         if max_dt is None:
             max_dt = 10e10
 
-        # calcuates difference in interparticle distances in both x and y
+        # calcuates the max difference vectors between all interparticle distances 
         dist_diff = np.max(np.linalg.norm(distances_2 - distances_1, axis=-1))
 
-        # determines an error ratio as the norm of the max error in x and y
+        # determines the ratio between actual and allowed error
         error_ratio = 30 * self.dt * error_tolerance / dist_diff
 
+        #calculates a new timestep and determines whether the current one was good enough
         dt, accept_move = None, None
         if error_ratio >= 1:
             dt = min(self.dt * 1.5, self.dt * error_ratio ** (1 / 4), max_dt)
