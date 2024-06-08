@@ -86,19 +86,28 @@ def accelerating_particle(mass, charge, loc_i, v_i, v_f, t_i, t_f):
 
     return DynamicParticle(mass, charge, r_func=acc_r, v_func=acc_v)
 
+p1 = moving_particle(1.2, 4, (.4, .4), (.99, 0))
+
 p1 = oscillating_particle(1, 2, (.5, 1.55), .92, .25, .24)
 p2 = oscillating_particle(1, 2, (2.5, 1.45), -.92, -.25, .24)
-# p1 = moving_particle(1.2, 4, (.4, .4), (.99, 0))
 
 particles = [p1, p2]
 
+# p1 = moving_particle(2, 2, (.5, 1.5), (.05, -.4))
+# p2 = moving_particle(2, 2, (1.5001, 2.5), (-.4, -.05))
+# p3 = moving_particle(2, 2, (2.5, 1.5), (-.05, .4))
+# p4 = moving_particle(2, 2, (1.5, .5), (.4, .05))
+# p5 = static_particle(8, -4.6, (1.5, 1.5))
+#
+# particles = [p1, p2, p3, p4, p5]
+
 if __name__ == "__main__":
     maxi = 3
-    sim = DynamicSim(particles, dt=.001, x_max=maxi, y_max=maxi, n_x=100, n_y=100)
+    sim = DynamicSim(particles, dt=.001, x_max=maxi, y_max=maxi, n_x=200, n_y=200)
 
-    sim.run(tmax=5, min_dt=.000001, max_dt=.01)
-    sim.positions_plot("out/test.png", show=False)
+    sim.run(tmax=5, min_dt=.00001, max_dt=.001)
+    sim.positions_plot("out/wavy_last.png", show=False, color_by_dt=False)
     try:
-        sim.animated_fields_plot(fps=25, num_frames=30, t_i=-1, filepath="out/test.mp4", plot_phi=True, show=False)
+        sim.animated_fields_plot(fps=20, num_frames=150, t_i=-1, filepath="out/wavy_last.mp4", plot_phi=True, show=False)
     finally:
         Grid.kill_multithreading()

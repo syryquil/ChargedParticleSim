@@ -60,8 +60,8 @@ class Simulator:
         '''
         pass
 
-    def animated_fields_plot(self, fps: float, num_frames: int, t_i: float = 0, filepath: str = None,
-                             show: bool = True, plot_phi: bool = False) -> None:
+    def animated_fields_plot(self, fps: float, num_frames: int, t_i: float = 0, filepath: str = None, show: bool = True,
+                             plot_B: bool = True, plot_phi: bool = False, plot_E: bool = True) -> None:
         '''
         Allows the user to save and show an animated field plot from t_i to the current simulation time.
         :param fps: frames per second of output plot
@@ -83,7 +83,7 @@ class Simulator:
 
         all_artists = []
         for t in tqdm(times, leave=True, position=0, desc='plotting', colour="green"): #for loop with progress bar
-            frame_artists = self._plot_fields(t, ax, plot_phi=plot_phi, E_streamplot=False)
+            frame_artists = self._plot_fields(t, ax, plot_B=plot_B, plot_phi=plot_phi, plot_E=plot_E, E_streamplot=False)
 
             all_artists.append(frame_artists)
 
@@ -93,14 +93,14 @@ class Simulator:
         if filepath:
             try:
                 print("saving to video...")
-                writer = anim.FFMpegWriter(fps=fps, metadata=dict(artist='Me'), bitrate=6000)
+                writer = anim.FFMpegWriter(fps=fps, metadata=dict(artist='Me'), bitrate=9000)
             except FileNotFoundError:
                 raise Exception("Install FFMPEG!")
             ani.save(filepath, dpi=300, writer=writer)
 
         if show: plt.show()
 
-    def positions_plot(self, filepath: str = None, show: bool = True) -> None:
+    def positions_plot(self, filepath: str = None, show: bool = True, color_by_dt = False) -> None:
         '''
         Allows the user to save and show a plot of particle positions.
         :param filepath: filepath at which plot would be saved
@@ -114,25 +114,41 @@ class Simulator:
         ax.set_aspect('equal')
 
         paths = np.array(self.paths).transpose((1, 0, 2))
-        for i, particle in enumerate(self.particles):
-            t_cmap = plt.get_cmap("cividis")
+
+        t_cmap = plt.get_cmap("cividis")
+        t_norm, t_data = None, None
+
+        charge_cmap = plt.get_cmap("bwr")
+        charge_norm = colors.CenteredNorm()
+
+        dts = np.diff(self.times).tolist()
+        dts.append(self.dt)
+
+        if color_by_dt:
+            t_norm = colors.LogNorm(vmin=min(dts), vmax=max(dts))
+            t_data = dts
+            plt.gcf().colorbar(plt.cm.ScalarMappable(norm=t_norm, cmap=t_cmap), ax=plt.gca(),
+                               orientation='vertical', label='dt')
+        else:
             t_norm = colors.Normalize(vmin=0, vmax=np.max(self.times))
+            t_data = self.times
+            plt.gcf().colorbar(plt.cm.ScalarMappable(norm=t_norm, cmap=t_cmap), ax=plt.gca(),
+                               orientation='vertical', label='time')
 
-            c_cmap = plt.get_cmap("bwr")
-            c_norm = colors.CenteredNorm()
-
+        for i, particle in enumerate(self.particles):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 plt.plot(paths[i, :, 0], paths[i, :, 1], c="silver", linewidth=1, zorder=0)
-                plt.scatter(paths[i, :, 0], paths[i, :, 1], s=1.5, c=t_cmap(t_norm(self.times)), zorder=5)
-                plt.scatter(paths[i, -1, 0], paths[i, -1, 1], s=8, c=c_cmap(c_norm(self.charges[i])), zorder=10)
+                plt.scatter(paths[i, :, 0], paths[i, :, 1], s=1.5, c=t_cmap(t_norm(t_data)), zorder=5)
+                plt.scatter(paths[i, -1, 0], paths[i, -1, 1], s=8, c=charge_cmap(charge_norm(self.charges[i])), zorder=10)
 
         if filepath:
-            plt.savefig(filepath)
+            plt.savefig(filepath, dpi=300)
 
         if show: plt.show()
 
-    def single_fields_plot(self, t, filepath:str = None, show: bool = True, plot_phi: bool = False, E_streamplot: bool = False):
+    def single_fields_plot(self, t, filepath:str = None, show: bool = True,
+                           plot_B: bool = True, plot_phi: bool = False, plot_E: bool = True, E_streamplot: bool = False):
         '''
         Allows the user to save and show a single field plot. Can use E field streamlines, which don't work in animated plots
         :param t: time to be plotted
@@ -149,7 +165,7 @@ class Simulator:
         scale = 8 / max(self.x_max, self.y_max)
         fig.set_size_inches(scale * self.x_max, scale * self.y_max)
 
-        _ = self._plot_fields(0, ax, plot_phi=plot_phi, E_streamplot=E_streamplot)
+        _ = self._plot_fields(0, ax, plot_B=plot_B, plot_phi=plot_phi, plot_E=plot_E, E_streamplot=E_streamplot)
 
         if filepath: plt.savefig(filepath)
         if show: plt.show()
@@ -166,15 +182,15 @@ class Simulator:
 
         self.Bs, self.Es = self._calc_fields()
 
-    def _calc_distances(self):
-        distances = np.zeros((self.num_particles, self.num_particles))
+    def _calc_distance_vecs(self):
+        distances = np.zeros((self.num_particles, self.num_particles, 2))
 
         for i in range(self.num_particles):
             for j in range(i + 1, self.num_particles):
-                distances[i][j] = np.linalg.norm(self.positions[i] - self.positions[j])
+                distances[i, j, :] = self.positions[i] - self.positions[j]
 
         if self.num_particles == 1: #if only one particle, use distance from the origin instead
-            distances[0, 0] = np.linalg.norm(self.particles[0].get_r())
+            distances[0, 0] = self.particles[0].get_r()
 
         return distances
 
@@ -227,7 +243,7 @@ class Simulator:
     ################
     ##plot helpers##
     ################
-    def _plot_fields(self, t, ax, plot_phi=False, E_streamplot=False):
+    def _plot_fields(self, t, ax, plot_B = True, plot_phi = False, plot_E = True, E_streamplot = False, B_range = 2.5):
         title = ax.annotate(f"t = {t:.2f}", (0.05, .95), xycoords="axes fraction", ha="left", fontsize=18)
 
         B_grid, phi_grid, E_grid = self._calc_gridded_fields(self.x_max, self.y_max, self.n_x, self.n_y, t)
@@ -236,9 +252,9 @@ class Simulator:
             positions[i] = particle.get_r(t)
 
         artists = []
-        artists.append(self._plot_B(B_grid, ax, B_range=2.5))
+        if plot_B: artists.append(self._plot_B(B_grid, ax, B_range=B_range))
         if plot_phi: artists.append(self._plot_phi(phi_grid, ax))
-        artists.append(self._plot_E(E_grid, ax, gridpoints_per_arrow=4, streamplot=E_streamplot))
+        if plot_E: artists.append(self._plot_E(E_grid, ax, gridpoints_per_arrow=4, streamplot=E_streamplot))
         artists.append(self._plot_particles(positions, ax))
         artists.append(title)
 
@@ -308,15 +324,16 @@ class DynamicSim(Simulator):
             warnings.simplefilter("ignore")
 
             # progress bar formatting
-            digits = int(np.floor(np.abs(np.log10(min_dt)))) -  1
+            digits = int(np.floor(np.abs(np.log10(min_dt))))
             bar_format = "'{l_bar}{bar}| {n:." + str(digits) + "f}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]'"
             with tqdm(total=tmax, unit="sim_t", position=0, leave=True, desc='simulating', bar_format=bar_format) as pbar:
 
                 #run simulation
                 while self.t < tmax and self.dt > min_dt:
+                    old_t = self.t
                     self.step_simulator(error_tolerance=error_tolerance, min_dt=min_dt, max_dt=max_dt)
 
-                    pbar.update(2*self.dt)
+                    pbar.update(self.t-old_t)
 
         print(f"simulation completed to t = {self.t:.3f}!")
 
@@ -339,7 +356,7 @@ class DynamicSim(Simulator):
             except SpeedOfLightError:
                 self._undo_and_reduce_dt(False)
                 continue
-            distances_1 = self._calc_distances()
+            distances_1 = self._calc_distance_vecs()
 
             # undo long step
             self._undo_move()
@@ -353,7 +370,7 @@ class DynamicSim(Simulator):
             except SpeedOfLightError:
                 self._undo_and_reduce_dt(twice)
                 continue
-            distances_2 = self._calc_distances()
+            distances_2 = self._calc_distance_vecs()
 
             # determine new dt, and decide whether to accept current steps
             dt, accept_move = self._calc_adaptive_timestep(distances_1, distances_2, error_tolerance, max_dt)
@@ -368,7 +385,7 @@ class DynamicSim(Simulator):
     ######################
     ##simulation helpers##
     ######################
-    def _rkstep(self, dt, ret_derivatives=False):
+    def _rkstep(self, dt, return_derivatives=False):
         f_1 = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
         f_2 = self._substep(*f_1, .5 * dt)
         f_3 = self._substep(*f_2, .5 * dt)
@@ -376,7 +393,7 @@ class DynamicSim(Simulator):
 
         d_dt = (1 / 6) * (f_1 + 2 * f_2 + 2 * f_3 + f_4)
         self._move_particles(*d_dt, dt)
-        if ret_derivatives:
+        if return_derivatives:
             return d_dt[0], d_dt[1]
 
     def _substep(self, dv_dts, dr_dts, dt):
@@ -420,15 +437,18 @@ class DynamicSim(Simulator):
         if max_dt is None:
             max_dt = 10e10
 
-        dist_diff = abs(np.max(distances_2 - distances_1))
-        rho = 30 * self.dt * error_tolerance / dist_diff
+        # calcuates difference in interparticle distances in both x and y
+        dist_diff = np.max(np.linalg.norm(distances_2 - distances_1, axis=-1))
+
+        # determines an error ratio as the norm of the max error in x and y
+        error_ratio = 30 * self.dt * error_tolerance / dist_diff
 
         dt, accept_move = None, None
-        if rho >= 1:
-            dt = min(self.dt * 1.5, self.dt * rho ** (1 / 4), max_dt)
+        if error_ratio >= 1:
+            dt = min(self.dt * 1.5, self.dt * error_ratio ** (1 / 4), max_dt)
             accept_move = True
         else:
-            dt = self.dt * rho ** (1 / 4)
+            dt = self.dt * error_ratio ** (1 / 4)
             accept_move = False
 
         return dt, accept_move
@@ -463,8 +483,8 @@ class DynamicSim(Simulator):
         F_RR = np.nan_to_num(_scalar_vector(coefficient_term * motion_term, self.velocities))
         return F_RR
 
-    def _calc_total_forces(self, ret_comp=False):  #calculate all forces on our particles
-        if ret_comp:
+    def _calc_total_forces(self, return_components=False):  #calculate all forces on our particles
+        if return_components:
             lorentz_forces, E_forces, B_forces = self._calc_lorentz_forces(True)
         else:
             lorentz_forces = self._calc_lorentz_forces()
@@ -472,7 +492,7 @@ class DynamicSim(Simulator):
         RR_forces = self._calc_radiation_reaction_forces()
         forces = lorentz_forces + RR_forces
 
-        if ret_comp:
+        if return_components:
             return forces, E_forces, B_forces, RR_forces, lorentz_forces
         return forces
 
