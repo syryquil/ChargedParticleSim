@@ -11,7 +11,6 @@ from tqdm import tqdm
 from grid import Grid
 from particle import DynamicParticle, Particle, SpeedOfLightError
 
-
 class Simulator:
     def __init__(self, particles: List[Particle], dt: float = .01,
                  x_max: float = None, y_max: float = None, n_x: int = None, n_y: int = None):
@@ -339,7 +338,7 @@ class DynamicSim(Simulator):
 
     def step_simulator(self, error_tolerance=10e-5, min_dt=10e-4, max_dt=None):
         '''
-        Steps the simulator using an adaptive 4th order Runge Kutta scheme
+        Steps the simulator using an adaptive Runge Kutta 4(5) scheme
         :param min_dt: Minimum timestep allowed. If adaptive timestep would be shorter, the simulation is terminated
         :param max_dt: Maximum timestep allowed. If adaptive timestep would be longer, this value is used instead
         :param error_tolerance: Maximum allowed error of relative particle positions in units/second
@@ -350,51 +349,44 @@ class DynamicSim(Simulator):
             if self.dt < min_dt:
                 break
 
-            # try long step
+            # take a 4th order step with order 5 error bounds
             try:
-                self._rkstep(self.dt * 2)
+                distances_4th, distances_5th = self._rk45step(self.dt)
             except SpeedOfLightError:
                 self._undo_and_reduce_dt(False)
                 continue
-            distances_1 = self._calc_distance_vecs()
-
-            # undo long step
-            self._undo_move()
-
-            # try 2 short steps
-            try:
-                twice = False
-                self._rkstep(self.dt)
-                twice = True
-                self._rkstep(self.dt)
-            except SpeedOfLightError:
-                self._undo_and_reduce_dt(twice)
-                continue
-            distances_2 = self._calc_distance_vecs()
 
             # determine new dt, and decide whether to accept current steps
-            dt, accept_move = self._calc_adaptive_timestep(distances_1, distances_2, error_tolerance, max_dt)
+            dt, accept_move = self._calc_adaptive_timestep(distances_4th, distances_5th, error_tolerance, max_dt)
             if accept_move:
                 self.dt = dt
                 break
             else:
-                self._undo_move()
                 self._undo_move()
                 self.dt = dt
 
     ######################
     ##simulation helpers##
     ######################
-    def _rkstep(self, dt, return_derivatives=False):
+    def _rk45step(self, dt):
+        #rk45 coefficients from Butcher's Tableau
         f_1 = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
-        f_2 = self._substep(*f_1, .5 * dt)
-        f_3 = self._substep(*f_2, .5 * dt)
-        f_4 = self._substep(*f_3, dt)
+        f_2 = self._substep(*f_1, dt*1/4)
+        f_3 = self._substep(*(f_1*1/4 + f_2*3/4), dt*3/8)
+        f_4 = self._substep(*(f_1*161/169 - f_2*600/169 + f_3*608/169), dt*12/13)
+        f_5 = self._substep(*(f_1*439/216 - f_2*8 + f_3*3680/513 - f_4*845/4104), dt)
+        f_6 = self._substep(*(-f_1*16/27 + f_2*4 - f_3*7088/2565 + f_4*1859/2052 - f_5*11/20), dt*1/2)
 
-        d_dt = (1 / 6) * (f_1 + 2 * f_2 + 2 * f_3 + f_4)
-        self._move_particles(*d_dt, dt)
-        if return_derivatives:
-            return d_dt[0], d_dt[1]
+        d_dt_5th = f_1*16/135 + f_3*6656/12825 + f_4*28561/56430 - f_5*9/50 + f_6*2/55
+        self._move_particles(*d_dt_5th, dt)
+        distances_5th = self._calc_distance_vecs() #interparticle distances
+        self._undo_move()
+
+        d_dt_4th = f_1*25/216 + f_3*1408/2565 + f_4*2197/4104 - f_5*1/5
+        self._move_particles(*d_dt_4th, dt) #we keep this one
+        distances_4th = self._calc_distance_vecs()
+
+        return distances_4th, distances_5th
 
     def _substep(self, dv_dts, dr_dts, dt):
         self._move_particles(dv_dts, dr_dts, dt)
@@ -433,23 +425,25 @@ class DynamicSim(Simulator):
             self._undo_move()
         self.dt *= dt_fraction
 
-    def _calc_adaptive_timestep(self, distances_1, distances_2, error_tolerance, max_dt=None):
+    def _calc_adaptive_timestep(self, distances_4th, distances_5th, error_tolerance, max_dt=None):
         if max_dt is None:
             max_dt = 10e10
 
         # calcuates the max difference vectors between all interparticle distances 
-        dist_diff = np.max(np.linalg.norm(distances_2 - distances_1, axis=-1))
+        dist_diff = np.max(np.linalg.norm(distances_5th - distances_4th, axis=-1))
 
         # determines the ratio between actual and allowed error
-        error_ratio = 30 * self.dt * error_tolerance / dist_diff
+        error_ratio = self.dt * error_tolerance / dist_diff
 
         #calculates a new timestep and determines whether the current one was good enough
+        dt_scale = .84 * error_ratio ** (1 / 4)
+
         dt, accept_move = None, None
-        if error_ratio >= 1:
-            dt = min(self.dt * 1.5, self.dt * error_ratio ** (1 / 4), max_dt)
+        if error_ratio > .9:
+            dt = min(self.dt * 1.5, self.dt * dt_scale, max_dt)
             accept_move = True
         else:
-            dt = self.dt * error_ratio ** (1 / 4)
+            dt = self.dt * dt_scale
             accept_move = False
 
         return dt, accept_move

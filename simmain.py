@@ -103,10 +103,10 @@ particles = [p1, p2]
 
 if __name__ == "__main__":
     maxi = 3
-    sim = DynamicSim(particles, dt=.001, x_max=maxi, y_max=maxi, n_x=200, n_y=200)
+    sim = DynamicSim(particles, dt=.01, x_max=maxi, y_max=maxi, n_x=200, n_y=200)
 
-    sim.run(tmax=5, min_dt=.00001, max_dt=.001)
-    sim.positions_plot("out/wavy_last.png", show=False, color_by_dt=False)
+    sim.run(tmax=5, min_dt=.00001, max_dt=.01)
+    sim.positions_plot("out/test.png", show=False, color_by_dt=False)
     try:
         sim.animated_fields_plot(fps=20, num_frames=150, t_i=-1, filepath="out/wavy_last.mp4", plot_phi=True, show=False)
     finally:
