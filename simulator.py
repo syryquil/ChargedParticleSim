@@ -206,9 +206,7 @@ class Simulator:
             B = background_B
 
         for i, source_charge in enumerate(self.particles):
-            if not particle:  #just use the given location
-                B += source_charge.B(loc, t)
-            elif particle is not source_charge:  #use the given location, but skip the particle at that location
+            if not particle or particle is not source_charge:  #just use the given location
                 B += source_charge.B(loc, t)
         return B
 
@@ -218,9 +216,7 @@ class Simulator:
 
         E = np.zeros(2)
         for i, source_charge in enumerate(self.particles):
-            if not particle:  #just use the given location
-                E += source_charge.E(loc, t)
-            elif particle is not source_charge:  #use the given location, but skip the particle at that location
+            if not particle or particle is not source_charge:  #just use the given location
                 E += source_charge.E(loc, t)
         return E
 
@@ -233,7 +229,7 @@ class Simulator:
             phi += source_charge.phi(loc, t)
         return phi
 
-    def _calc_fields(self):
+    def _calc_fields(self): # compute fields at current locations of all particles
         B_vec = np.array([self._total_B(particle.get_r(), particle=particle) for particle in self.particles])
         E_vec = np.array([self._total_E(particle.get_r(), particle=particle) for particle in self.particles])
 
@@ -274,7 +270,7 @@ class Simulator:
 
         return B_grid, phi_grid, E_grid
 
-    def _plot_B(self, B_grid, ax, B_range=3) -> plt.Axes:
+    def _plot_B(self, B_grid, ax, B_range: float=3) -> plt.Axes:
         return ax.pcolormesh(B_grid.xg, B_grid.yg, B_grid.values, vmax=B_range, vmin=-B_range, cmap="bwr_r", zorder=0)
 
     def _plot_phi(self, phi_grid, ax) -> plt.Axes:
@@ -304,7 +300,7 @@ class DynamicSim(Simulator):
     def __init__(self, particles: List[DynamicParticle], dt: float = .01,
                  x_max: float = None, y_max: float = None, n_x: int = None, n_y: int = None):
         super().__init__(particles, dt, x_max, y_max, n_x, n_y)
-        self.forces, self.E_forces, self.B_forces, self.RR_forces, self.lorentz_forces = self._calc_total_forces(True)
+        self.forces = self._calc_total_forces()
 
     ################
     ##main methods##
@@ -345,6 +341,7 @@ class DynamicSim(Simulator):
         :return: None
         '''
         while True:
+            old_forces = self.forces
             # ensure time steps are not too small
             if self.dt < min_dt:
                 break
@@ -353,7 +350,8 @@ class DynamicSim(Simulator):
             try:
                 distances_4th, distances_5th = self._rk45step(self.dt)
             except SpeedOfLightError:
-                self._undo_and_reduce_dt(False)
+                self._undo_move(old_forces)
+                self.dt *= .25
                 continue
 
             # determine new dt, and decide whether to accept current steps
@@ -362,7 +360,7 @@ class DynamicSim(Simulator):
                 self.dt = dt
                 break
             else:
-                self._undo_move()
+                self._undo_move(old_forces)
                 self.dt = dt
 
     ######################
@@ -378,9 +376,9 @@ class DynamicSim(Simulator):
         f_6 = self._substep(*(-f_1*16/27 + f_2*4 - f_3*7088/2565 + f_4*1859/2052 - f_5*11/20), dt*1/2)
 
         d_dt_5th = f_1*16/135 + f_3*6656/12825 + f_4*28561/56430 - f_5*9/50 + f_6*2/55
-        self._move_particles(*d_dt_5th, dt)
+        old_forces = self._move_particles(*d_dt_5th, dt)
         distances_5th = self._calc_distance_vecs() #interparticle distances
-        self._undo_move()
+        self._undo_move(old_forces)
 
         d_dt_4th = f_1*25/216 + f_3*1408/2565 + f_4*2197/4104 - f_5*1/5
         self._move_particles(*d_dt_4th, dt) #we keep this one
@@ -389,9 +387,9 @@ class DynamicSim(Simulator):
         return distances_4th, distances_5th
 
     def _substep(self, dv_dts, dr_dts, dt):
-        self._move_particles(dv_dts, dr_dts, dt)
+        old_forces = self._move_particles(dv_dts, dr_dts, dt)
         d_dts = np.array([_scalar_vector(1 / (self.gammas * self.masses), self.forces), self.velocities])
-        self._undo_move()
+        self._undo_move(old_forces)
 
         return d_dts
 
@@ -401,11 +399,14 @@ class DynamicSim(Simulator):
             new_v = self.velocities[i] + dv_dts[i] * dt
             particle.move_particle(new_r, new_v, dt)
 
+        old_forces = self.forces
         self._update_values()
+        self._update_forces()
         self.times.append(self.t)
         self.paths.append(self.positions)
+        return old_forces
 
-    def _undo_move(self) -> None:
+    def _undo_move(self, old_forces=None) -> None:
         particle_times = {particle.t_curr for particle in self.particles}
 
         for particle in self.particles:
@@ -415,15 +416,14 @@ class DynamicSim(Simulator):
                 particle.undo_move()
 
         self._update_values()
+        if old_forces is not None:
+            self.forces = old_forces
+        else:
+            self.forces = self._calc_total_forces()
+
         if self.times:
             self.times.pop()
             self.paths.pop()
-
-    def _undo_and_reduce_dt(self, twice, dt_fraction=.25):
-        self._undo_move()
-        if twice:
-            self._undo_move()
-        self.dt *= dt_fraction
 
     def _calc_adaptive_timestep(self, distances_4th, distances_5th, error_tolerance, max_dt=None):
         if max_dt is None:
@@ -448,9 +448,8 @@ class DynamicSim(Simulator):
 
         return dt, accept_move
 
-    def _update_values(self):
-        super()._update_values()
-        self.forces, self.E_forces, self.B_forces, self.RR_forces, self.lorentz_forces = self._calc_total_forces(True)
+    def _update_forces(self):
+        self.forces = self._calc_total_forces()
 
     ################
     ##interactions##
