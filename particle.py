@@ -60,19 +60,16 @@ class Particle:
     ################
 
     def phi(self, loc, t=None, ret_t_prime=False):  # Scalar Liénard–Wiechert potential
-        loc = np.array(loc)
         t_prime, r_prime, v_prime = self._calc_source_values(loc, t)
         phi = self.charge / (
                 4 * np.pi * (self._distance(loc, t_prime) - np.dot(self._distance_vec(loc, t_prime), v_prime)))
         return (phi, t_prime) if ret_t_prime else phi
 
     def A(self, loc: np.ndarray, t=None):  # Vector Liénard–Wiechert potential
-        loc = np.array(loc)
         phi, t_prime = self.phi(loc, t, True)
         return phi * self.get_v(t_prime)
 
     def E(self, loc: np.ndarray, t=None, h=10 ** -6, dt=10 ** -6):  # Electric field vectors
-        loc = np.array(loc)
         if t is None:
             t = self.t_curr
 
@@ -90,7 +87,6 @@ class Particle:
 
     def B(self, loc, t=None, h=10 ** -6):
         # Magnetic field z component scalar. x and y components are always 0 in 2 motion
-        loc = np.array(loc)
         if t is None:
             t = self.t_curr
 
@@ -108,13 +104,9 @@ class Particle:
     ##############################
 
     def _distance_vec(self, loc: np.ndarray, t=None):
-        loc = np.array(loc)
-        t = self._check_t(t)
         return loc - self.get_r(t)
 
     def _distance(self, loc: np.ndarray, t=None):
-        loc = np.array(loc)
-        t = self._check_t(t)
         return np.linalg.norm(self._distance_vec(loc, t))
 
     def _calc_source_values(self, loc: np.ndarray, t=None):
@@ -122,7 +114,6 @@ class Particle:
         Returns the values of the particle seen at a certain location loc accounting for the speed of light.
         t_prime, r_prime, and v_prime are typically known in literature as the "retarded time" as it is delayed.
         """
-        loc = np.array(loc)
         if t is None:
             t = self.t_curr
 
