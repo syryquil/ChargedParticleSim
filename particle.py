@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Callable
-from scipy.interpolate import interp1d
+
 from scipy import optimize
 
 class Particle:
@@ -22,9 +22,9 @@ class Particle:
         if initial_dt <= 0:
             raise ValueError("initial_dt must be positive")
 
-        self.times = [0]
+        self.times = [0.]
         self.initial_dt = initial_dt
-        self.t_curr = 0
+        self.t_curr = 0.
         self.mass, self.charge = mass, charge
         self.r_func, self.v_func = r_func, v_func
         self.r_curr = r_func(0)
@@ -54,7 +54,6 @@ class Particle:
 
     def get_gamma(self, t=None):  #get lorentz factor
         return 1 / (1 - np.linalg.norm(self.get_v(t)) ** 2)
-
 
     ################
     ##field values##
@@ -89,7 +88,8 @@ class Particle:
 
         return -grad_phi - dA_dt
 
-    def B(self, loc, t=None, h=10 ** -6):  # Magnetic field z component scalar. x and y components are always 0 in 2 motion
+    def B(self, loc, t=None, h=10 ** -6):
+        # Magnetic field z component scalar. x and y components are always 0 in 2 motion
         loc = np.array(loc)
         if t is None:
             t = self.t_curr
@@ -145,6 +145,7 @@ class Particle:
         loc = np.array(loc)
         if self._distance(loc, t) <= threshold:
             raise RuntimeError("Attempting to calculate fields too close to particle")
+
     def _check_t(self, t):
         pass
 
@@ -157,14 +158,12 @@ class Particle:
             else:
                 raise SpeedOfLightError(f"velocity {speed}c cannot exceed the speed of light")
 
+
 class DynamicParticle(Particle):
     def __init__(self, mass, charge, r_func: Callable, v_func: Callable, initial_dt=.01):
         super().__init__(mass, charge, initial_dt, r_func, v_func)
         self.r = [self.r_curr]
         self.v = [self.v_curr]
-
-        self.r_interpolate = None
-        self.v_interpolate = None
 
     ################
     ##main methods##
@@ -182,13 +181,10 @@ class DynamicParticle(Particle):
         self.v_curr = np.array(new_v)
         self.v.append(self.v_curr)
 
-        self.r_interpolate = None
-        self.v_interpolate = None
-
         self._check_velocity(self.v_curr, self.t_curr)
 
     def undo_move(self):
-        if self.t_curr == 0 :
+        if self.t_curr == 0:
             raise RuntimeError("cannot undo beyond t=0")
         self.times.pop()
         self.r.pop()
@@ -197,9 +193,6 @@ class DynamicParticle(Particle):
         self.t_curr = self.times[-1]
         self.r_curr = self.r[-1]
         self.v_curr = self.v[-1]
-
-        self.r_interpolate = None  #interpolator used for r after t=0
-        self.v_interpolate = None
 
     ##############
     ##properties##
@@ -212,10 +205,7 @@ class DynamicParticle(Particle):
         elif t <= 0:
             return self.r_func(t)
         else:
-            if not self.r_interpolate:
-                self.r_interpolate = interp1d(self.times, self.r, axis=0)
-            interpolated_r = self.r_interpolate(t)
-            return interpolated_r
+            return _interp(t, self.times, self.r)
 
     def get_v(self, t=None) -> np.ndarray:
         t = self._check_t(t)
@@ -225,9 +215,7 @@ class DynamicParticle(Particle):
         elif t <= 0:
             v = self.v_func(t)
         else:
-            if not self.v_interpolate:
-                self.v_interpolate = interp1d(self.times, self.v, axis=0)
-            v = self.v_interpolate(t)
+            v = _interp(t, self.times, self.v)
 
         self._check_velocity(v, t)
         return v
@@ -243,6 +231,7 @@ class DynamicParticle(Particle):
             raise ValueError("t is greater than t_curr")
         else:
             return t
+
 
 #UNUSED BUT KEPT JUST IN CASE
 class AutoParticle(Particle):
@@ -289,5 +278,14 @@ class AutoParticle(Particle):
             return self.t_curr
         return t
 
+
 class SpeedOfLightError(RuntimeError):
     pass
+
+
+def _interp(t: float, times: list[float], vals: list[np.ndarray]) -> np.ndarray:
+    idx = np.searchsorted(times, t)
+    dt = times[idx] - times[idx - 1]
+    dr_dt = (vals[idx] - vals[idx - 1]) / dt
+    interpolated = vals[idx - 1] + dr_dt * (t - times[idx])
+    return interpolated
